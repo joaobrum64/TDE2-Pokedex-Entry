@@ -1,0 +1,87 @@
+# ==========================================
+# DATASET DE TREINAMENTO
+# ==========================================
+
+# Dataset pesado de imagens
+datasets/imagens/
+
+
+# ==========================================
+# MODELOS DE MACHINE LEARNING
+# ==========================================
+
+# Ignora os modelos treinados
+modelos/*
+
+# Permite manter a pasta modelos no Git
+!modelos/.gitkeep
+
+
+# ==========================================
+# PYTHON
+# ==========================================
+
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Cache do Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Cache de ferramentas Python
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+
+# ==========================================
+# NODE / REACT
+# ==========================================
+
+node_modules/
+dist/
+build/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+
+# ==========================================
+# VARIAVEIS DE AMBIENTE
+# ==========================================
+
+.env
+.env.*
+!.env.example
+
+
+# ==========================================
+# EDITORES / IDEs
+# ==========================================
+
+.vscode/
+.idea/
+
+
+# ==========================================
+# SISTEMA OPERACIONAL
+# ==========================================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+
+# ==========================================
+# ARQUIVOS TEMPORARIOS
+# ==========================================
+
+*.tmp
+*.temp
+*.log
