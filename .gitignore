@@ -3,7 +3,7 @@
 # ==========================================
 
 # Dataset pesado de imagens
-datasets/imagens/
+datasets
 
 
 # ==========================================
@@ -85,3 +85,13 @@ desktop.ini
 *.tmp
 *.temp
 *.log
+
+datasets/cifar10/
+datasets/deteccao_externa/
+datasets/deteccao_externa_v2/
+datasets/pipeline_multiplos/
+datasets/naopokemons/
+datasets/pokemons/
+datasets/deteccao_teste/
+datasets/deteccao/
+datasets/deteccao_externa/
