@@ -1,33 +1,31 @@
 from pathlib import Path
+
 import torch
 import torch.nn as nn
+
 from PIL import Image
 from torchvision import transforms
 from torchvision.models import resnet18
 
-
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 
 MODELO_PATH = (
-    ROOT_DIR
-    / "modelos"
-    / "pokemon_resnet18_v2.pth"
+ROOT_DIR
+/ "modelos"
+/ "pokemon_resnet18_v2.pth"
 )
 
-
 TRANSFORM_IMAGEM = transforms.Compose([
-    transforms.Resize((224, 224)),
-
-    transforms.ToTensor(),
-
-    transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225],
-    ),
+transforms.Resize((224, 224)),
+transforms.ToTensor(),
+transforms.Normalize(
+mean=[0.485, 0.456, 0.406],
+std=[0.229, 0.224, 0.225],
+),
 ])
 
-
 class ModeloPokemon:
+
     def __init__(self):
         self.dispositivo = torch.device(
             "cuda"
@@ -43,7 +41,7 @@ class ModeloPokemon:
     def carregar_modelo(self):
         if not MODELO_PATH.exists():
             raise FileNotFoundError(
-                f"Modelo não encontrado em: {MODELO_PATH}"
+                f"Modelo nao encontrado em: {MODELO_PATH}"
             )
 
         checkpoint = torch.load(
@@ -114,9 +112,14 @@ class ModeloPokemon:
 
         probabilidades = probabilidades[0]
 
+        quantidade_resultados = min(
+            5,
+            len(self.classes),
+        )
+
         top_probabilidades, top_indices = torch.topk(
             probabilidades,
-            k=5,
+            k=quantidade_resultados,
         )
 
         resultados = []
@@ -134,12 +137,14 @@ class ModeloPokemon:
                 * 100
             )
 
-            resultados.append({
-                "pokemon": nome_pokemon,
-                "confianca": round(
-                    confianca,
-                    2,
-                ),
-            })
+            resultados.append(
+                {
+                    "pokemon": nome_pokemon,
+                    "confianca": round(
+                        confianca,
+                        2,
+                    ),
+                }
+            )
 
         return resultados

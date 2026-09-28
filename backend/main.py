@@ -1,17 +1,22 @@
 import csv
 from io import BytesIO
 from pathlib import Path
+
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
-from backend.ml.modelo import ModeloPokemon
+
+from backend.ml.pipeline import PipelinePokemon
 
 
 app = FastAPI(
     title="Pokédex Gen 1 API",
-    description="Backend TDE2",
-    version="0.4.0",
+    description=(
+        "Backend do projeto TDE2 de reconhecimento "
+        "de Pokémon da Primeira Geração."
+    ),
+    version="0.5.0",
 )
 
 
@@ -51,7 +56,6 @@ def load_pokemons():
         encoding="utf-8-sig",
         newline="",
     ) as arquivo:
-
         reader = csv.DictReader(
             arquivo
         )
@@ -70,19 +74,22 @@ def load_pokemons():
 
 pokemons = load_pokemons()
 
+
 pokemons_por_nome = {
     pokemon["name"].lower(): pokemon
     for pokemon in pokemons.values()
 }
 
 
-print("Carregando modelo de Machine Learning...")
+print(
+    "Carregando pipeline de Machine Learning..."
+)
 
-modelo_pokemon = ModeloPokemon()
+pipeline = PipelinePokemon()
 
 print(
-    "Modelo carregado em:",
-    modelo_pokemon.dispositivo,
+    f"Pipeline carregado em: "
+    f"{pipeline.dispositivo}"
 )
 
 
@@ -98,11 +105,14 @@ app.mount(
 @app.get("/")
 def root():
     return {
-        "message": "API working"
+        "message": "API da Pokédex funcionando!"
     }
 
+
 @app.get("/pokemon/{id_pokemon}")
-def get_pokemon(id_pokemon: int):
+def get_pokemon(
+    id_pokemon: int,
+):
     pokemon = pokemons.get(
         id_pokemon
     )
@@ -115,9 +125,10 @@ def get_pokemon(id_pokemon: int):
 
     return pokemon
 
+
 @app.post("/pokemon/identificar")
 async def identificar_pokemon(
-    arquivo: UploadFile = File(...)
+    arquivo: UploadFile = File(...),
 ):
     try:
         conteudo = await arquivo.read()
@@ -125,7 +136,7 @@ async def identificar_pokemon(
         if not conteudo:
             raise HTTPException(
                 status_code=400,
-                detail="O arquivo está vazio.",
+                detail="O arquivo enviado está vazio.",
             )
 
         imagem = Image.open(
@@ -134,43 +145,59 @@ async def identificar_pokemon(
 
         imagem.load()
 
-        resultados = modelo_pokemon.prever(
+        resultados_ml = pipeline.processar(
             imagem
         )
 
-        melhor_resultado = resultados[0]
+        pokemons_encontrados = []
 
-        nome_previsto = melhor_resultado[
-            "pokemon"
-        ]
+        for resultado in resultados_ml:
+            nome_pokemon = resultado[
+                "pokemon"
+            ]
 
-        confianca = melhor_resultado[
-            "confianca"
-        ]
+            pokemon = pokemons_por_nome.get(
+                nome_pokemon.lower()
+            )
 
-        pokemon = pokemons_por_nome.get(
-            nome_previsto.lower()
-        )
+            if pokemon is None:
+                continue
 
-        if pokemon is None:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Pokémon "
-                    "não encontrado no dataset."
-                ),
+            pokemons_encontrados.append(
+                {
+                    "pokemon": pokemon,
+                    "confianca": resultado[
+                        "confianca"
+                    ],
+                    "confianca_detector": resultado[
+                        "confianca_detector"
+                    ],
+                    "box": list(
+                        resultado["box"]
+                    ),
+                    "fallback": resultado[
+                        "fallback"
+                    ],
+                    "top_5": resultado[
+                        "top_5"
+                    ],
+                }
             )
 
         return {
-            "pokemon": pokemon,
-            "confianca": confianca,
-            "top_5": resultados,
+            "quantidade": len(
+                pokemons_encontrados
+            ),
+            "pokemons": pokemons_encontrados,
         }
 
     except UnidentifiedImageError:
         raise HTTPException(
             status_code=400,
-            detail="O arquivo enviado não é uma imagem válida.",
+            detail=(
+                "O arquivo enviado não é "
+                "uma imagem válida."
+            ),
         )
 
     finally:
