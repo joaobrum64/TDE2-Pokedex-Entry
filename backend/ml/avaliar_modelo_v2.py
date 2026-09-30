@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torchvision.models import resnet18
 
-from preparar_dados import testar_dataloaders
+from backend.ml.preparar_dados import testar_dataloaders
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent

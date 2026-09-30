@@ -8,7 +8,7 @@ from torchvision import transforms
 from torchvision.models import resnet18
 
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 MODELO_PATH = (
     ROOT_DIR
@@ -134,7 +134,7 @@ def main():
         )
 
         print(
-            'python backend/ml/prever_imagem.py '
+            'python -m backend.ml.antigos.prever_imagem '
             '"caminho_da_imagem"'
         )
 

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from modelo import ModeloPokemon
+from backend.ml.modelo import ModeloPokemon
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent

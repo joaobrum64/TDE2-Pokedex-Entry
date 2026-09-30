@@ -8,7 +8,7 @@ from torchvision import transforms
 from torchvision.models import resnet18
 
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 MODELO_PATH = (
     ROOT_DIR
@@ -129,7 +129,7 @@ def main():
     if len(sys.argv) < 2:
         print("Uso:")
         print(
-            'python backend/ml/teste_detector.py '
+            'python -m backend.ml.antigos.teste_detector '
             '"caminho_da_imagem"'
         )
         return

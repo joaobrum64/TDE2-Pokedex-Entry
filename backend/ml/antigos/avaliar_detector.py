@@ -4,10 +4,10 @@ import torch
 import torch.nn as nn
 from torchvision.models import resnet18
 
-from preparar_dados_binario import preparar_dados_binarios
+from backend.ml.antigos.preparar_dados_binario import preparar_dados_binarios
 
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 MODELO_PATH = (
     ROOT_DIR

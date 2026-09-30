@@ -72,11 +72,25 @@ def load_pokemons():
     return fun_pokemons
 
 
+def normalizar_nome(nome):
+    # As classes do modelo vêm dos nomes das pastas de treino
+    # (ex.: "Farfetchd", "MrMime"), enquanto o CSV usa a grafia
+    # oficial ("Farfetch'd", "Mr. Mime"). Os símbolos ♀ e ♂ são
+    # mantidos para não confundir os dois Nidoran.
+    return (
+        nome
+        .lower()
+        .replace(" ", "")
+        .replace(".", "")
+        .replace("'", "")
+    )
+
+
 pokemons = load_pokemons()
 
 
 pokemons_por_nome = {
-    pokemon["name"].lower(): pokemon
+    normalizar_nome(pokemon["name"]): pokemon
     for pokemon in pokemons.values()
 }
 
@@ -91,6 +105,19 @@ print(
     f"Pipeline carregado em: "
     f"{pipeline.dispositivo}"
 )
+
+
+classes_sem_dados = [
+    classe
+    for classe in pipeline.classificador.classes
+    if normalizar_nome(classe) not in pokemons_por_nome
+]
+
+if classes_sem_dados:
+    raise RuntimeError(
+        "Classes do modelo sem correspondência em "
+        f"{CSV_PATH.name}: {classes_sem_dados}"
+    )
 
 
 app.mount(
@@ -156,12 +183,9 @@ async def identificar_pokemon(
                 "pokemon"
             ]
 
-            pokemon = pokemons_por_nome.get(
-                nome_pokemon.lower()
-            )
-
-            if pokemon is None:
-                continue
+            pokemon = pokemons_por_nome[
+                normalizar_nome(nome_pokemon)
+            ]
 
             pokemons_encontrados.append(
                 {

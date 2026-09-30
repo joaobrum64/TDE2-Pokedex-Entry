@@ -3,8 +3,8 @@ from statistics import mean, median
 import torch
 from torchvision.datasets import CIFAR10
 
-from modelo import ModeloPokemon
-from preparar_dados import (
+from backend.ml.modelo import ModeloPokemon
+from backend.ml.preparar_dados import (
     carregar_amostras,
     transform_avaliacao,
     PokemonDataset,

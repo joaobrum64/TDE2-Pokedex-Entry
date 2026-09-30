@@ -1,3 +1,4 @@
+import json
 import random
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from torchvision import transforms
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 DATASET_PATH = ROOT_DIR / "datasets" / "pokemons"
+DIVISAO_PATH = ROOT_DIR / "datasets" / "divisao_pokemons.json"
 
 EXTENSOES_ACEITAS = {
     ".png",
@@ -88,6 +90,99 @@ class PokemonDataset(Dataset):
         return imagem, classe
 
 
+def listar_imagens(nome_classe):
+    pasta_classe = DATASET_PATH / nome_classe
+
+    return [
+        arquivo
+        for arquivo in pasta_classe.iterdir()
+        if (
+            arquivo.is_file()
+            and arquivo.suffix.lower() in EXTENSOES_ACEITAS
+        )
+    ]
+
+
+def salvar_divisao(treino, validacao, teste):
+    divisao = {}
+
+    for nome_conjunto, amostras in (
+        ("treino", treino),
+        ("validacao", validacao),
+        ("teste", teste),
+    ):
+        divisao[nome_conjunto] = [
+            caminho.relative_to(DATASET_PATH).as_posix()
+            for caminho, _ in amostras
+        ]
+
+    with open(
+        DIVISAO_PATH,
+        mode="w",
+        encoding="utf-8",
+    ) as arquivo:
+        json.dump(
+            divisao,
+            arquivo,
+            ensure_ascii=False,
+            indent=0,
+        )
+
+
+def carregar_divisao(classes, class_to_idx):
+    with open(
+        DIVISAO_PATH,
+        mode="r",
+        encoding="utf-8",
+    ) as arquivo:
+        divisao = json.load(arquivo)
+
+    conjuntos = []
+    caminhos_na_divisao = set()
+    quantidade_ausentes = 0
+
+    for nome_conjunto in ("treino", "validacao", "teste"):
+        amostras = []
+
+        for caminho_relativo in divisao[nome_conjunto]:
+            caminho = DATASET_PATH / caminho_relativo
+
+            caminhos_na_divisao.add(caminho)
+
+            # Imagens removidas do dataset depois da divisão
+            # simplesmente saem do conjunto em que estavam.
+            if not caminho.exists():
+                quantidade_ausentes += 1
+                continue
+
+            amostras.append(
+                (caminho, class_to_idx[caminho.parent.name])
+            )
+
+        conjuntos.append(amostras)
+
+    quantidade_fora = sum(
+        1
+        for nome_classe in classes
+        for caminho in listar_imagens(nome_classe)
+        if caminho not in caminhos_na_divisao
+    )
+
+    if quantidade_ausentes > 0:
+        print(
+            f"Aviso: {quantidade_ausentes} imagens da divisão "
+            "não existem mais no dataset e foram ignoradas."
+        )
+
+    if quantidade_fora > 0:
+        print(
+            f"Aviso: {quantidade_fora} imagens do dataset não "
+            f"estão em {DIVISAO_PATH.name} e foram ignoradas."
+        )
+
+    return conjuntos
+
+
 def carregar_amostras():
     classes = sorted([
         pasta.name
@@ -100,21 +195,43 @@ def carregar_amostras():
         for indice, nome in enumerate(classes)
     }
 
+    # A divisão fica gravada em arquivo para que todos os modelos
+    # sejam treinados e avaliados exatamente nas mesmas imagens.
+    # Ela só é sorteada quando o arquivo ainda não existe.
+    if DIVISAO_PATH.exists():
+        treino, validacao, teste = carregar_divisao(
+            classes,
+            class_to_idx,
+        )
+
+    else:
+        treino, validacao, teste = sortear_divisao(
+            classes,
+            class_to_idx,
+        )
+
+        salvar_divisao(
+            treino,
+            validacao,
+            teste,
+        )
+
+    return (
+        classes,
+        class_to_idx,
+        treino,
+        validacao,
+        teste,
+    )
+
+
+def sortear_divisao(classes, class_to_idx):
     treino = []
     validacao = []
     teste = []
 
     for nome_classe in classes:
-        pasta_classe = DATASET_PATH / nome_classe
-
-        imagens = [
-            arquivo
-            for arquivo in pasta_classe.iterdir()
-            if (
-                arquivo.is_file()
-                and arquivo.suffix.lower() in EXTENSOES_ACEITAS
-            )
-        ]
+        imagens = listar_imagens(nome_classe)
 
         random.shuffle(imagens)
 
@@ -159,8 +276,6 @@ def carregar_amostras():
     random.shuffle(teste)
 
     return (
-        classes,
-        class_to_idx,
         treino,
         validacao,
         teste,

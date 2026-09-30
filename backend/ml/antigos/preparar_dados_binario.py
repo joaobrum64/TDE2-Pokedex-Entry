@@ -6,10 +6,10 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
-from preparar_dados import carregar_amostras
+from backend.ml.preparar_dados import carregar_amostras
 
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 COREL_PATH = (
     ROOT_DIR

@@ -11,7 +11,7 @@ from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 
 DETECTOR_PATH = (
@@ -543,9 +543,9 @@ def main():
         print("Uso:")
 
         print(
-            "python "
-            "backend/ml/"
-            "teste_pipeline_multiplos.py "
+            "python -m "
+            "backend.ml.antigos."
+            "teste_pipeline_multiplos "
             "\"caminho_imagem\""
         )
 

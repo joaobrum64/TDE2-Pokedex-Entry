@@ -8,7 +8,7 @@ from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 MODELO_PATH = (
     ROOT_DIR
@@ -294,8 +294,8 @@ def main():
     if len(sys.argv) < 2:
         print("Uso:")
         print(
-            "python "
-            "backend/ml/teste_detector_objetos.py "
+            "python -m "
+            "backend.ml.antigos.teste_detector_objetos "
             "\"caminho_da_imagem\""
         )
         return

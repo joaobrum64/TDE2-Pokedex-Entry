@@ -7,10 +7,10 @@ from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.transforms import functional as F
 
-from modelo import ModeloPokemon
+from backend.ml.modelo import ModeloPokemon
 
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
 DETECTOR_PATH = (
     ROOT_DIR
@@ -500,9 +500,9 @@ def main():
         )
 
         print(
-            "python "
-            "backend/ml/"
-            "teste_pipeline_completo.py "
+            "python -m "
+            "backend.ml.antigos."
+            "teste_pipeline_completo "
             "\"caminho_imagem\""
         )
 

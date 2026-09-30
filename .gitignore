@@ -86,6 +86,9 @@ desktop.ini
 *.temp
 *.log
 
+# Imagens geradas pelos scripts de teste
+saidas/
+
 datasets/cifar10/
 datasets/deteccao_externa/
 datasets/deteccao_externa_v2/

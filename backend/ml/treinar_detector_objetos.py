@@ -7,7 +7,7 @@ from torchvision.models.detection import (
 )
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 
-from preparar_dados_deteccao import criar_dataloaders
+from backend.ml.preparar_dados_deteccao import criar_dataloaders
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
