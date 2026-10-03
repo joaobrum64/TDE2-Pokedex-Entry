@@ -1,7 +1,7 @@
+import csv
 import json
 import random
 from pathlib import Path
-
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
@@ -11,7 +11,7 @@ from torchvision import transforms
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 DATASET_PATH = ROOT_DIR / "datasets" / "pokemons"
 DIVISAO_PATH = ROOT_DIR / "datasets" / "divisao_pokemons.json"
-
+LIMPEZA_PATH = ROOT_DIR / "datasets" / "limpeza_pokemons.csv"
 EXTENSOES_ACEITAS = {
     ".png",
     ".jpg",
@@ -22,15 +22,12 @@ EXTENSOES_ACEITAS = {
 
 SEED = 42
 BATCH_SIZE = 32
-
 PORCENTAGEM_TREINO = 0.70
 PORCENTAGEM_VALIDACAO = 0.15
 PORCENTAGEM_TESTE = 0.15
 
-
 random.seed(SEED)
 torch.manual_seed(SEED)
-
 
 transform_treino = transforms.Compose([
     transforms.Resize((224, 224)),
@@ -183,7 +180,36 @@ def carregar_divisao(classes, class_to_idx):
     return conjuntos
 
 
-def carregar_amostras():
+def carregar_exclusoes():
+    # Imagens marcadas com acao "remover" em limpeza_pokemons.csv
+    # (cópias e imagens com classe duvidosa). Sem o arquivo, nada
+    # é excluído.
+    if not LIMPEZA_PATH.exists():
+        return set()
+
+    with open(
+        LIMPEZA_PATH,
+        mode="r",
+        encoding="utf-8-sig",
+        newline="",
+    ) as arquivo:
+        return {
+            linha["imagem"]
+            for linha in csv.DictReader(arquivo)
+            if (linha["acao"] or "").strip().lower() == "remover"
+        }
+
+
+def aplicar_limpeza(amostras, exclusoes):
+    return [
+        (caminho, classe)
+        for caminho, classe in amostras
+        if caminho.relative_to(DATASET_PATH).as_posix()
+        not in exclusoes
+    ]
+
+
+def carregar_amostras(aplicar_exclusoes=True):
     classes = sorted([
         pasta.name
         for pasta in DATASET_PATH.iterdir()
@@ -215,6 +241,15 @@ def carregar_amostras():
             validacao,
             teste,
         )
+
+    # aplicar_exclusoes=False devolve a divisão original, usada para
+    # comparar modelos novos com o v2 no mesmo conjunto de teste.
+    if aplicar_exclusoes:
+        exclusoes = carregar_exclusoes()
+
+        treino = aplicar_limpeza(treino, exclusoes)
+        validacao = aplicar_limpeza(validacao, exclusoes)
+        teste = aplicar_limpeza(teste, exclusoes)
 
     return (
         classes,
@@ -282,7 +317,7 @@ def sortear_divisao(classes, class_to_idx):
     )
 
 
-def testar_dataloaders():
+def testar_dataloaders(aplicar_exclusoes=True):
     dispositivo = torch.device(
         "cuda"
         if torch.cuda.is_available()
@@ -295,7 +330,7 @@ def testar_dataloaders():
         amostras_treino,
         amostras_validacao,
         amostras_teste,
-    ) = carregar_amostras()
+    ) = carregar_amostras(aplicar_exclusoes)
 
     dataset_treino = PokemonDataset(
         amostras_treino,

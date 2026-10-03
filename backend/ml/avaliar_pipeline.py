@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from backend.ml.pipeline import PipelinePokemon
+from backend.ml.pipeline import DETECTOR_PATH, PipelinePokemon
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
@@ -290,6 +290,23 @@ def main():
     # para comparar execuções (ex.: "v2", "v3").
     rotulo = sys.argv[1] if len(sys.argv) > 1 else "atual"
 
+    # Opcional: outro classificador em modelos/ (ex.:
+    # pokemon_resnet18_v3.pth). Sem ele, usa o mesmo da API.
+    caminho_classificador = (
+        ROOT_DIR / "modelos" / sys.argv[2]
+        if len(sys.argv) > 2 and sys.argv[2] != "-"
+        else None
+    )
+
+    # Opcional: outro detector em modelos/. Use "-" no lugar do
+    # classificador para manter o da API, ex.:
+    # avaliar_pipeline det_v2 - pokemon_object_detector_v2.pth
+    caminho_detector = (
+        ROOT_DIR / "modelos" / sys.argv[3]
+        if len(sys.argv) > 3
+        else DETECTOR_PATH
+    )
+
     if not GABARITO_PATH.exists():
         print(f"Gabarito nao encontrado: {GABARITO_PATH}")
         print("Gere com:")
@@ -310,7 +327,7 @@ def main():
     print()
     print("Carregando pipeline...")
 
-    pipeline = PipelinePokemon()
+    pipeline = PipelinePokemon(caminho_classificador, caminho_detector)
 
     print(f"Pipeline carregado em: {pipeline.dispositivo}")
     print()

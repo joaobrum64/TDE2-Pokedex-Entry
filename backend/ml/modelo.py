@@ -1,20 +1,24 @@
 from pathlib import Path
-
 import torch
 import torch.nn as nn
-
 from PIL import Image
 from torchvision import transforms
-from torchvision.models import resnet18
+from torchvision.models import (
+ConvNeXt_Tiny_Weights,
+EfficientNet_B0_Weights,
+ResNet18_Weights,
+convnext_tiny,
+efficientnet_b0,
+resnet18,
+)
+
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
-
 MODELO_PATH = (
 ROOT_DIR
 / "modelos"
-/ "pokemon_resnet18_v2.pth"
+/ "pokemon_resnet18_v3.pth"
 )
-
 TRANSFORM_IMAGEM = transforms.Compose([
 transforms.Resize((224, 224)),
 transforms.ToTensor(),
@@ -24,9 +28,41 @@ std=[0.229, 0.224, 0.225],
 ),
 ])
 
+def criar_arquitetura(nome, quantidade_classes, pre_treinado=False):
+ 
+    if nome == "resnet18":
+        modelo = resnet18(
+            weights=ResNet18_Weights.DEFAULT if pre_treinado else None
+        )
+        modelo.fc = nn.Linear(modelo.fc.in_features, quantidade_classes)
+
+    elif nome == "efficientnet_b0":
+        modelo = efficientnet_b0(
+            weights=EfficientNet_B0_Weights.DEFAULT if pre_treinado else None
+        )
+        modelo.classifier[1] = nn.Linear(
+            modelo.classifier[1].in_features,
+            quantidade_classes,
+        )
+
+    elif nome == "convnext_tiny":
+        modelo = convnext_tiny(
+            weights=ConvNeXt_Tiny_Weights.DEFAULT if pre_treinado else None
+        )
+        modelo.classifier[2] = nn.Linear(
+            modelo.classifier[2].in_features,
+            quantidade_classes,
+        )
+
+    else:
+        raise ValueError(f"Arquitetura desconhecida: {nome}")
+
+    return modelo
+
+
 class ModeloPokemon:
 
-    def __init__(self):
+    def __init__(self, caminho=MODELO_PATH):
         self.dispositivo = torch.device(
             "cuda"
             if torch.cuda.is_available()
@@ -36,16 +72,16 @@ class ModeloPokemon:
         self.modelo = None
         self.classes = None
 
-        self.carregar_modelo()
+        self.carregar_modelo(caminho)
 
-    def carregar_modelo(self):
-        if not MODELO_PATH.exists():
+    def carregar_modelo(self, caminho):
+        if not caminho.exists():
             raise FileNotFoundError(
-                f"Modelo nao encontrado em: {MODELO_PATH}"
+                f"Modelo nao encontrado em: {caminho}"
             )
 
         checkpoint = torch.load(
-            MODELO_PATH,
+            caminho,
             map_location=self.dispositivo,
             weights_only=False,
         )
@@ -54,12 +90,8 @@ class ModeloPokemon:
 
         quantidade_classes = checkpoint["num_classes"]
 
-        modelo = resnet18(weights=None)
-
-        quantidade_entradas = modelo.fc.in_features
-
-        modelo.fc = nn.Linear(
-            quantidade_entradas,
+        modelo = criar_arquitetura(
+            checkpoint["architecture"],
             quantidade_classes,
         )
 

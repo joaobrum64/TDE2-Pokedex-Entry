@@ -3,31 +3,23 @@ import json
 import random
 import shutil
 from pathlib import Path
-
 from PIL import Image
-
 from backend.ml.analise_dataset import normalizar_nome
 from backend.ml.preparar_dados import carregar_amostras
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
-
 DATASETS_PATH = ROOT_DIR / "datasets"
-
 CSV_PATH = DATASETS_PATH / "pokemon_gen1.csv"
 COREL_PATH = DATASETS_PATH / "naopokemons" / "Corel-5k"
 SPRITES_TESTE_PATH = DATASETS_PATH / "deteccao" / "test"
-
 OUTPUT_PATH = DATASETS_PATH / "avaliacao_pipeline"
 MOSAICOS_PATH = OUTPUT_PATH / "mosaicos"
 GABARITO_PATH = OUTPUT_PATH / "gabarito.json"
-
 SEED = 42
-
 QUANTIDADE_NENHUM = 500
 QUANTIDADE_MOSAICOS_2 = 150
 QUANTIDADE_MOSAICOS_3 = 150
-
 ALTURA_MOSAICO = 384
 
 
@@ -36,8 +28,7 @@ def caminho_relativo(caminho):
 
 
 def gerar_unicos(amostras_teste, classes):
-    # Imagens reais com um Pokémon, tiradas do conjunto de teste
-    # do classificador (nunca usadas no treino).
+
     return [
         {
             "imagem": caminho_relativo(caminho),
@@ -49,7 +40,7 @@ def gerar_unicos(amostras_teste, classes):
 
 
 def gerar_nenhum(sorteio):
-    # As versões "_aug" são cópias alteradas das originais.
+
     originais = sorted(
         arquivo
         for arquivo in COREL_PATH.iterdir()
@@ -110,8 +101,7 @@ def montar_mosaico(caminhos):
 
 
 def gerar_mosaicos(amostras_teste, classes, sorteio):
-    # Imagens reais de Pokémon diferentes lado a lado, para medir
-    # o caso de vários Pokémon sem depender de sprites.
+
     disponiveis = list(amostras_teste)
 
     sorteio.shuffle(disponiveis)
@@ -182,8 +172,7 @@ def carregar_classes_por_numero(classes):
 
 
 def gerar_sprites(classes):
-    # Cenas sintéticas de teste do detector: sprites colados sobre
-    # fundos do Corel, algumas sem nenhum Pokémon.
+
     classes_por_numero = carregar_classes_por_numero(classes)
 
     itens = []
@@ -221,7 +210,7 @@ def main():
 
     sorteio = random.Random(SEED)
 
-    classes, _, _, _, amostras_teste = carregar_amostras()
+    classes, _, _, _, amostras_teste = carregar_amostras(aplicar_exclusoes=False)
 
     if OUTPUT_PATH.exists():
         shutil.rmtree(OUTPUT_PATH)

@@ -248,7 +248,7 @@ def main():
         loader_treino,
         loader_validacao,
         loader_teste,
-    ) = testar_dataloaders()
+    ) = testar_dataloaders(aplicar_exclusoes=False)
 
     if classes_modelo != classes_dataset:
         raise ValueError(
@@ -283,6 +283,30 @@ def main():
     print(
         f"Accuracy de teste: "
         f"{accuracy_geral:.2f}%"
+    )
+
+    # Mesmo teste sem as imagens marcadas para remoção em
+    # limpeza_pokemons.csv (cópias e classes duvidosas).
+    loader_teste_limpo = testar_dataloaders()[4]
+
+    (
+        accuracy_limpo,
+        corretos_limpo,
+        total_limpo,
+        _,
+        _,
+    ) = avaliar_modelo(
+        modelo,
+        loader_teste_limpo,
+        classes_modelo,
+        dispositivo,
+    )
+
+    print()
+    print(
+        f"Accuracy de teste limpo: "
+        f"{accuracy_limpo:.2f}% "
+        f"({corretos_limpo}/{total_limpo})"
     )
 
     ranking = sorted(

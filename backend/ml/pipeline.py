@@ -1,5 +1,4 @@
 from pathlib import Path
-
 import torch
 from PIL import Image
 from torchvision.models.detection import (
@@ -9,42 +8,49 @@ from torchvision.models.detection.faster_rcnn import (
 FastRCNNPredictor,
 )
 from torchvision.transforms import functional as F
-
 from backend.ml.modelo import ModeloPokemon
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 DETECTOR_PATH = (
 ROOT_DIR
 / "modelos"
-/ "pokemon_object_detector.pth"
+/ "pokemon_object_detector_v2.pth"
 )
-
-SCORE_MINIMO_DETECTOR = 0.50
-CONFIANCA_MINIMA_CLASSIFICADOR = 50.0
-CONFIANCA_MINIMA_FALLBACK = 70.0
+SCORE_MINIMO_DETECTOR = 0.90
+CONFIANCA_MINIMA_CLASSIFICADOR = 10.0
+CONFIANCA_MINIMA_FALLBACK = 85.0
 IOA_THRESHOLD = 0.80
+IOA_MESMA_ESPECIE = 0.30
+
 
 class PipelinePokemon:
 
-    def __init__(self):
+    def __init__(
+        self,
+        caminho_classificador=None,
+        caminho_detector=DETECTOR_PATH,
+    ):
         self.dispositivo = torch.device(
             "cuda"
             if torch.cuda.is_available()
             else "cpu"
         )
 
-        self.detector = self.carregar_detector()
-        self.classificador = ModeloPokemon()
+        self.detector = self.carregar_detector(caminho_detector)
+        if caminho_classificador is None:
+            self.classificador = ModeloPokemon()
+        else:
+            self.classificador = ModeloPokemon(caminho_classificador)
 
-    def carregar_detector(self):
-        if not DETECTOR_PATH.exists():
+    def carregar_detector(self, caminho):
+        if not caminho.exists():
             raise FileNotFoundError(
-                f"Detector nao encontrado: {DETECTOR_PATH}"
+                f"Detector nao encontrado: {caminho}"
             )
 
         checkpoint = torch.load(
-            DETECTOR_PATH,
+            caminho,
             map_location=self.dispositivo,
             weights_only=False,
         )
@@ -216,7 +222,12 @@ class PipelinePokemon:
     def detectar_regioes(
         self,
         imagem,
+        score_minimo=None,
+        remover_redundantes=True,
     ):
+        if score_minimo is None:
+            score_minimo = SCORE_MINIMO_DETECTOR
+
         imagem_tensor = F.to_tensor(
             imagem
         )
@@ -262,7 +273,7 @@ class PipelinePokemon:
 
             if (
                 score_valor
-                < SCORE_MINIMO_DETECTOR
+                < score_minimo
             ):
                 continue
 
@@ -295,6 +306,9 @@ class PipelinePokemon:
                     ),
                 }
             )
+
+        if not remover_redundantes:
+            return deteccoes
 
         return self.remover_boxes_redundantes(
             deteccoes
@@ -398,6 +412,44 @@ class PipelinePokemon:
 
         return resultado
 
+    def unir_mesma_especie(
+        self,
+        resultados,
+    ):
+        mantidos = []
+
+        for resultado in sorted(
+            resultados,
+            key=lambda item: item["confianca"],
+            reverse=True,
+        ):
+            repetido = False
+
+            for mantido in mantidos:
+                if mantido["pokemon"] != resultado["pokemon"]:
+                    continue
+
+                if self.calcular_area(resultado["box"]) <= self.calcular_area(
+                    mantido["box"]
+                ):
+                    box_menor = resultado["box"]
+                    box_maior = mantido["box"]
+                else:
+                    box_menor = mantido["box"]
+                    box_maior = resultado["box"]
+
+                if (
+                    self.calcular_ioa(box_menor, box_maior)
+                    >= IOA_MESMA_ESPECIE
+                ):
+                    repetido = True
+                    break
+
+            if not repetido:
+                mantidos.append(resultado)
+
+        return mantidos
+
     def processar(
         self,
         imagem,
@@ -423,7 +475,7 @@ class PipelinePokemon:
             deteccoes,
         )
 
-        resultados_validos = (
+        resultados_validos = self.unir_mesma_especie(
             self.filtrar_resultados(
                 resultados
             )

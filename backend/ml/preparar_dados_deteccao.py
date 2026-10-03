@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
@@ -9,16 +8,15 @@ from torchvision.transforms import functional as F
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 DATASET_PATH = ROOT_DIR / "datasets" / "deteccao"
-
 BATCH_SIZE = 4
 
 
 class PokemonDetectionDataset(Dataset):
-    def __init__(self, split):
+    def __init__(self, split, dataset_path=DATASET_PATH):
         self.split = split
 
-        self.images_path = DATASET_PATH / split / "images"
-        self.labels_path = DATASET_PATH / split / "labels"
+        self.images_path = dataset_path / split / "images"
+        self.labels_path = dataset_path / split / "labels"
 
         if not self.images_path.exists():
             raise FileNotFoundError(
@@ -94,9 +92,6 @@ class PokemonDetectionDataset(Dataset):
                 ]
             )
 
-            # Faster R-CNN reserva a classe 0 para background.
-            # Nossa única classe de objeto é:
-            # 1 = pokemon
             labels.append(1)
 
         if len(caixas) > 0:
