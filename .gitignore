@@ -16,6 +16,15 @@ modelos/*
 # Permite manter a pasta modelos no Git
 !modelos/.gitkeep
 
+# Os dois modelos usados pela API vão para o Git, para o projeto rodar
+# logo depois do clone (o detector é salvo em meia precisão para ficar
+# abaixo do limite de 100 MB por arquivo do GitHub).
+!modelos/pokemon_resnet18_v3.pth
+!modelos/pokemon_object_detector.pth
+
+# Arquivos compactados (ex.: cópias da pasta modelos)
+*.zip
+
 
 # ==========================================
 # PYTHON

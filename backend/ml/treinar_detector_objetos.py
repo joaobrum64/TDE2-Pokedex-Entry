@@ -200,8 +200,18 @@ def salvar_modelo(
         exist_ok=True,
     )
 
+    # Pesos em meia precisão: o arquivo cai de ~158 MB para ~80 MB e
+    # cabe no limite de 100 MB do GitHub, sem mudar os resultados.
     checkpoint = {
-        "model_state_dict": modelo.state_dict(),
+        "model_state_dict": {
+            chave: (
+                valor.half()
+                if valor.is_floating_point()
+                else valor
+            )
+            for chave, valor in modelo.state_dict().items()
+        },
+        "precisao": "float16",
         "architecture": "fasterrcnn_resnet50_fpn",
         "num_classes": 2,
         "classes": [

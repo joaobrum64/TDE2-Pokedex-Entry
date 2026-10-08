@@ -1,33 +1,42 @@
 import { useEffect, useState, type ChangeEvent } from "react"
 
 
-type Pokemon = {
-  pokedex_number: string
-  name: string
-  classification: string
-  type1: string
-  type2: string
-  height_m: string
-  weight_kg: string
-  hp: string
-  attack: string
-  defense: string
-  sp_attack: string
-  sp_defense: string
-  speed: string
-  is_legendary: string
-  evolves_from: string
-  evolves_to: string
-  description: string
-  level_up_moves_red_blue: string
-  level_up_moves_yellow: string
-  level_up_moves_red_green_japan: string
-  level_up_moves_blue_japan: string
+type Referencia = {
+  numero: number
+  nome: string
 }
 
 
-type Previsao = {
-  pokemon: string
+type Golpe = {
+  nivel: number
+  nome: string
+}
+
+
+type Pokemon = {
+  numero: number
+  nome: string
+  classificacao: string
+  tipos: string[]
+  altura_m: number | null
+  peso_kg: number | null
+  stats: {
+    hp: number
+    ataque: number
+    defesa: number
+    especial: number
+    velocidade: number
+  }
+  lendario: boolean
+  descricao: string
+  evolui_de: Referencia[]
+  evolui_para: Referencia[]
+  golpes: Golpe[]
+  sprite: string
+}
+
+
+type Previsao = Referencia & {
   confianca: number
 }
 
@@ -44,11 +53,112 @@ type ResultadoPokemon = {
 
 type RespostaIdentificacao = {
   quantidade: number
+  largura: number
+  altura: number
   pokemons: ResultadoPokemon[]
 }
 
 
+function listarNomes(referencias: Referencia[]) {
+  return referencias.map((referencia) => referencia.nome).join(", ")
+}
+
+
+function formatarMedida(valor: number | null, unidade: string) {
+  return valor === null ? "Não informado" : `${valor} ${unidade}`
+}
+
+
 const API_URL = "http://127.0.0.1:8000"
+
+
+// Mostra as caixas só para resultados do detector; no fallback a
+// caixa é a imagem inteira e não acrescenta informação.
+function temCaixa(resultado: ResultadoPokemon) {
+  return !resultado.fallback && resultado.box.length === 4
+}
+
+
+// Campo de pergunta ao LLM local sobre um Pokémon (rota
+// POST /pokemon/{numero}/perguntar; ver LLM.md).
+function PerguntaPokemon({ numero }: { numero: number }) {
+  const [pergunta, setPergunta] = useState("")
+  const [resposta, setResposta] = useState("")
+  const [erro, setErro] = useState("")
+  const [carregando, setCarregando] = useState(false)
+
+  async function enviarPergunta() {
+    if (!pergunta.trim()) {
+      return
+    }
+
+    setResposta("")
+    setErro("")
+    setCarregando(true)
+
+    try {
+      const retorno = await fetch(
+        `${API_URL}/pokemon/${numero}/perguntar`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pergunta }),
+        }
+      )
+
+      const dados = await retorno.json()
+
+      if (!retorno.ok) {
+        setErro(
+          typeof dados.detail === "string"
+            ? dados.detail
+            : "Não foi possível obter uma resposta."
+        )
+        return
+      }
+
+      setResposta(dados.resposta)
+    } catch (erroConexao) {
+      console.error(erroConexao)
+      setErro("Falha ao conectar no backend.")
+    } finally {
+      setCarregando(false)
+    }
+  }
+
+  return (
+    <div>
+      <h3>
+        Pergunte sobre este Pokémon
+      </h3>
+
+      <input
+        type="text"
+        value={pergunta}
+        maxLength={500}
+        placeholder="Ex.: Quais são os pontos fortes dele?"
+        onChange={(evento) => setPergunta(evento.target.value)}
+        onKeyDown={(evento) => {
+          if (evento.key === "Enter") {
+            enviarPergunta()
+          }
+        }}
+        style={{ width: "320px" }}
+      />
+
+      <button
+        onClick={enviarPergunta}
+        disabled={carregando}
+      >
+        {carregando ? "Pensando..." : "Perguntar"}
+      </button>
+
+      {resposta && <p>{resposta}</p>}
+
+      {erro && <p>{erro}</p>}
+    </div>
+  )
+}
 
 
 function App() {
@@ -58,6 +168,12 @@ function App() {
 
   const [arquivo, setArquivo] = useState<File | null>(null)
   const [preview, setPreview] = useState("")
+
+  // Tamanho da imagem processada, para posicionar as caixas.
+  const [dimensoes, setDimensoes] = useState<{
+    largura: number
+    altura: number
+  } | null>(null)
 
   const [erro, setErro] = useState("")
   const [mensagem, setMensagem] = useState("")
@@ -69,6 +185,7 @@ function App() {
     setErro("")
     setMensagem("")
     setResultados([])
+    setDimensoes(null)
 
     const id_pokemon = Number(idPokemon)
 
@@ -152,6 +269,7 @@ function App() {
     )
 
     setResultados([])
+    setDimensoes(null)
     setErro("")
     setMensagem("")
   }
@@ -180,6 +298,7 @@ function App() {
     setErro("")
     setMensagem("")
     setResultados([])
+    setDimensoes(null)
     setCarregando(true)
 
     const formulario = new FormData()
@@ -217,6 +336,11 @@ function App() {
 
       const dados: RespostaIdentificacao =
         await resposta.json()
+
+      setDimensoes({
+        largura: dados.largura,
+        altura: dados.altura,
+      })
 
       if (dados.quantidade === 0) {
         setMensagem(
@@ -291,15 +415,60 @@ function App() {
             Imagem enviada
           </h3>
 
-          <img
-            src={preview}
-            alt="Imagem enviada para identificação"
+          <div
             style={{
-              maxWidth: "400px",
-              maxHeight: "400px",
-              objectFit: "contain",
+              position: "relative",
+              display: "inline-block",
             }}
-          />
+          >
+            <img
+              src={preview}
+              alt="Imagem enviada para identificação"
+              style={{
+                display: "block",
+                maxWidth: "400px",
+                maxHeight: "400px",
+              }}
+            />
+
+            {dimensoes && resultados.map((resultado, indice) => {
+              if (!temCaixa(resultado)) {
+                return null
+              }
+
+              const [x1, y1, x2, y2] = resultado.box
+
+              return (
+                <div
+                  key={`caixa-${indice}`}
+                  style={{
+                    position: "absolute",
+                    left: `${(x1 / dimensoes.largura) * 100}%`,
+                    top: `${(y1 / dimensoes.altura) * 100}%`,
+                    width: `${((x2 - x1) / dimensoes.largura) * 100}%`,
+                    height: `${((y2 - y1) / dimensoes.altura) * 100}%`,
+                    border: "2px solid red",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      background: "red",
+                      color: "white",
+                      fontSize: "12px",
+                      padding: "0 4px",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {indice + 1}. {resultado.pokemon.nome}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 
@@ -364,18 +533,19 @@ function App() {
 
                 return (
                   <section
-                    key={`${pokemon.pokedex_number}-${indice}`}
+                    key={`${pokemon.numero}-${indice}`}
                   >
                     <hr />
 
                     <h2>
-                      #{pokemon.pokedex_number}{" "}
-                      {pokemon.name}
+                      {temCaixa(resultado) && `${indice + 1}. `}
+                      #{pokemon.numero}{" "}
+                      {pokemon.nome}
                     </h2>
 
                     <img
-                      src={`${API_URL}/sprites/${pokemon.pokedex_number}.png`}
-                      alt={`Sprite de ${pokemon.name}`}
+                      src={`${API_URL}${pokemon.sprite}`}
+                      alt={`Sprite de ${pokemon.nome}`}
                       width={120}
                       height={120}
                       style={{
@@ -423,7 +593,7 @@ function App() {
                       <strong>
                         Classificação:
                       </strong>{" "}
-                      {pokemon.classification}
+                      {pokemon.classificacao}
                     </p>
 
 
@@ -431,12 +601,7 @@ function App() {
                       <strong>
                         Tipo:
                       </strong>{" "}
-                      {pokemon.type1}
-
-                      {
-                        pokemon.type2 &&
-                        ` / ${pokemon.type2}`
-                      }
+                      {pokemon.tipos.join(" / ")}
                     </p>
 
 
@@ -444,7 +609,7 @@ function App() {
                       <strong>
                         Altura:
                       </strong>{" "}
-                      {pokemon.height_m} m
+                      {formatarMedida(pokemon.altura_m, "m")}
                     </p>
 
 
@@ -452,7 +617,7 @@ function App() {
                       <strong>
                         Peso:
                       </strong>{" "}
-                      {pokemon.weight_kg} kg
+                      {formatarMedida(pokemon.peso_kg, "kg")}
                     </p>
 
 
@@ -463,28 +628,37 @@ function App() {
 
                     <ul>
                       <li>
-                        HP: {pokemon.hp}
+                        HP: {pokemon.stats.hp}
                       </li>
 
                       <li>
-                        Ataque: {pokemon.attack}
+                        Ataque: {pokemon.stats.ataque}
                       </li>
 
                       <li>
-                        Defesa: {pokemon.defense}
+                        Defesa: {pokemon.stats.defesa}
                       </li>
 
                       <li>
-                        Ataque Especial: {pokemon.sp_attack}
+                        Especial: {pokemon.stats.especial}
                       </li>
 
                       <li>
-                        Defesa Especial: {pokemon.sp_defense}
+                        Velocidade: {pokemon.stats.velocidade}
                       </li>
+                    </ul>
 
-                      <li>
-                        Velocidade: {pokemon.speed}
-                      </li>
+
+                    <h3>
+                      Golpes (Red/Blue)
+                    </h3>
+
+                    <ul>
+                      {pokemon.golpes.map((golpe, posicao) => (
+                        <li key={`${golpe.nome}-${posicao}`}>
+                          Nível {golpe.nivel}: {golpe.nome}
+                        </li>
+                      ))}
                     </ul>
 
 
@@ -493,33 +667,38 @@ function App() {
                     </h3>
 
                     <p>
-                      {pokemon.description}
+                      {pokemon.descricao}
                     </p>
 
 
-                    <h3>
-                      Evolução
-                    </h3>
+                    {/* Cada linha só aparece quando existe a evolução;
+                        sem nenhuma das duas, a seção inteira some. */}
+                    {(pokemon.evolui_de.length > 0 ||
+                      pokemon.evolui_para.length > 0) && (
+                      <>
+                        <h3>
+                          Evolução
+                        </h3>
 
-                    <p>
-                      <strong>
-                        Evolui de:
-                      </strong>{" "}
-                      {
-                        pokemon.evolves_from ||
-                        "Nenhum"
-                      }
-                    </p>
+                        {pokemon.evolui_de.length > 0 && (
+                          <p>
+                            <strong>
+                              Evolui de:
+                            </strong>{" "}
+                            {listarNomes(pokemon.evolui_de)}
+                          </p>
+                        )}
 
-                    <p>
-                      <strong>
-                        Evolui para:
-                      </strong>{" "}
-                      {
-                        pokemon.evolves_to ||
-                        "Nenhum"
-                      }
-                    </p>
+                        {pokemon.evolui_para.length > 0 && (
+                          <p>
+                            <strong>
+                              Evolui para:
+                            </strong>{" "}
+                            {listarNomes(pokemon.evolui_para)}
+                          </p>
+                        )}
+                      </>
+                    )}
 
 
                     {resultado.top_5.length > 0 && (
@@ -533,9 +712,9 @@ function App() {
                             resultado.top_5.map(
                               (previsao) => (
                                 <li
-                                  key={previsao.pokemon}
+                                  key={previsao.numero}
                                 >
-                                  {previsao.pokemon}:{" "}
+                                  {previsao.nome}:{" "}
                                   {
                                     previsao
                                       .confianca
@@ -548,6 +727,9 @@ function App() {
                         </ol>
                       </>
                     )}
+
+
+                    <PerguntaPokemon numero={pokemon.numero} />
                   </section>
                 )
               }

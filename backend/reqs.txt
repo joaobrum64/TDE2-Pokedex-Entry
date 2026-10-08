@@ -1,6 +1,10 @@
-fastapi
-uvicorn
-pillow
-torch
-torchvision
-python-multipart
+# Versões testadas com Python 3.13. O pip instala o PyTorch para CPU,
+# que é o suficiente para rodar a API (~1,3 s por imagem).
+fastapi==0.141.1
+uvicorn==0.54.0
+pillow==12.3.0
+torch==2.14.0
+torchvision==0.29.0
+python-multipart==0.0.32
+# Usado só pelos scripts de análise em backend/ml/
+numpy==2.5.3
