@@ -1,11 +1,20 @@
-# Ponto de integração do LLM local (Ollama), com RAG sobre a ficha do
-# Pokémon. O guia completo está em LLM.md, na raiz do projeto.
-#
-# A rota POST /pokemon/{numero}/perguntar (backend/main.py) já monta o
-# contexto e chama responder(). Para ligar o LLM, só esta função precisa
-# ser implementada; o frontend já tem o campo de pergunta.
+import json
+import urllib.error
+import urllib.request
 
 
+OLLAMA_URL = "http://localhost:11434/api/chat"
+
+MODELO_OLLAMA = "llama3.2:3b"
+
+TEMPO_LIMITE_SEGUNDOS = 120
+
+INSTRUCOES = (
+    "Você é a Pokédex da Primeira Geração. Responda em português do Brasil, "
+    "de forma curta e direta, usando APENAS os dados do Pokémon fornecidos "
+    "abaixo. Se a resposta não estiver nesses dados, diga que a Pokédex não "
+    "tem essa informação. Não invente dados de outras gerações."
+)
 class LLMNaoConfigurado(Exception):
     # A rota devolve 501: a integração ainda não foi implementada.
     pass
@@ -25,6 +34,57 @@ def responder(pergunta, contexto, ficha):
     #
     # Deve devolver a resposta do LLM como texto, ou levantar
     # LLMIndisponivel com uma mensagem em português se o LLM falhar.
-    raise LLMNaoConfigurado(
-        "O LLM local ainda não foi configurado."
+    corpo = {
+        "model": MODELO_OLLAMA,
+        "stream": False,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    f"{INSTRUCOES}\n\n"
+                    f"Dados do Pokémon:\n{contexto}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": pergunta,
+            },
+        ],
+    }
+
+    requisicao = urllib.request.Request(
+        OLLAMA_URL,
+        data=json.dumps(corpo).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
     )
+
+    try:
+        with urllib.request.urlopen(
+            requisicao,
+            timeout=TEMPO_LIMITE_SEGUNDOS,
+        ) as resposta:
+            dados = json.loads(
+                resposta.read().decode("utf-8")
+            )
+
+        texto = dados["message"]["content"].strip()
+
+    # URLError: Ollama fechado ou modelo não baixado (HTTPError é uma
+    # subclasse). ValueError/KeyError: resposta em formato inesperado.
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        ValueError,
+        KeyError,
+    ) as erro:
+        raise LLMIndisponivel(
+            "Não foi possível falar com o Ollama. Verifique se ele está "
+            f"aberto e se o modelo {MODELO_OLLAMA} foi baixado."
+        ) from erro
+
+    if not texto:
+        raise LLMIndisponivel(
+            "O LLM não devolveu nenhuma resposta."
+        )
+
+    return texto
