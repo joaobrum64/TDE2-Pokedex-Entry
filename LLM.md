@@ -1,177 +1,130 @@
-# Integração do LLM local (Ollama + RAG)
+# LLM local (Ollama + RAG)
 
-Guia para implementar o componente de LLM do TDE2. Foi escrito para ser lido tanto por uma pessoa quanto pelo Claude: se você usa o Claude Code, peça a ele para ler este arquivo e o `CLAUDE.md` antes de começar.
+Guia do componente de LLM do TDE2: como está implementado, por que cada decisão foi tomada e como mexer sem quebrar. Foi escrito para ser lido tanto por uma pessoa quanto pelo Claude: se você usa o Claude Code, peça a ele para ler este arquivo e o `CLAUDE.md` antes de alterar qualquer coisa da IA.
 
-## Objetivo (requisito do projeto)
+## Objetivo
 
-Depois que o sistema identifica um Pokémon em uma imagem, o usuário pode fazer perguntas sobre ele. As respostas vêm de um **LLM rodando localmente via Ollama**, com **RAG**: o backend busca os dados do Pokémon no dataset (`datasets/pokemon_gen1.csv`) e injeta esses dados no prompt. O sistema precisa continuar **100% offline**: nenhuma chamada a APIs na nuvem.
+Depois que o sistema identifica Pokémon numa imagem, o usuário conversa com a "Pokédex" sobre eles. As respostas vêm de um **LLM rodando localmente via Ollama**, com **RAG** sobre o dataset do projeto. O sistema continua **100% offline**.
 
-## O que já está pronto
+Comportamento pedido pelo grupo:
 
-| Parte | Onde | Estado |
-|---|---|---|
-| Rota da API | `POST /pokemon/{numero}/perguntar` em `backend/main.py` | Pronta. Recebe a pergunta, monta o contexto e chama `responder()` |
-| Contexto do RAG | `montar_contexto(ficha)` em `backend/pokedex.py` | Pronto. Transforma a ficha em texto em português |
-| Ficha do Pokémon | `Pokedex.obter_ficha(nome_ou_numero)` em `backend/pokedex.py` | Pronta |
-| Campo de pergunta no site | Componente `PerguntaPokemon` em `frontend/src/App.tsx` | Pronto. Aparece embaixo de cada Pokémon e mostra a resposta ou o erro |
-| **Geração da resposta** | **`responder()` em `backend/llm.py`** | **Falta implementar.** Hoje levanta `LLMNaoConfigurado` e a rota devolve 501 |
+1. **Tom de Pokédex da Primeira Geração**, criativo e descritivo, em português do Brasil.
+2. **Dados do dataset como fonte principal**; conhecimento próprio do modelo é permitido, mas sempre sinalizado num parágrafo que começa com `Registro externo:`.
+3. **Universo restrito à Gen 1** (Red, Green, Blue e Yellow); diferenças relevantes entre versões podem ser comentadas.
+4. **Perguntas sobre outros Pokémon da Gen 1**, relacionando com o(s) detectado(s) (ex.: "qual a altura do Blastoise?" com um Pikachu na imagem → responde e compara).
+5. **Histórico por conversa**, guardado enquanto o backend estiver rodando.
 
-**A única coisa que precisa ser escrita é o corpo de `responder()` em `backend/llm.py`.** O resto do caminho (site → API → contexto → resposta na tela) já funciona.
-
-## Fluxo de uma pergunta
+## Arquitetura
 
 ```
-Site (PerguntaPokemon)
-  │  POST /pokemon/25/perguntar   {"pergunta": "Quais são os pontos fortes dele?"}
+Site: componente ChatImagem (frontend/src/App.tsx), um chat por imagem enviada
+  │  POST /pokemon/identificar   → resposta traz "conversa_id" (Pokémon detectados já registrados)
+  │  POST /conversas             → cria conversa para a busca manual ({"numeros": [25]})
+  │  POST /conversas/{id}/perguntar  {"pergunta": "..."}
   ▼
-backend/main.py · perguntar_sobre_pokemon()
-  │  ficha    = pokedex.obter_ficha(25)
-  │  contexto = montar_contexto(ficha)          ← o "R" do RAG
+backend/main.py · perguntar()
+  │  conversa  = conversas.obter(id)                       backend/conversas.py (só memória)
+  │  contexto  = pokedex.montar_contexto_conversa(detectados, [pergunta, perguntas anteriores])
+  │  lembrete  = pokedex.lembrete_para_pergunta(detectados, pergunta)
   ▼
-backend/llm.py · responder(pergunta, contexto, ficha)   ← IMPLEMENTAR AQUI
-  │  monta o prompt e chama o Ollama local
+backend/llm.py · responder_em_partes(pergunta, contexto, histórico, lembrete=...)
+  │  POST http://localhost:11434/api/chat  (stream)
   ▼
-{"numero": 25, "nome": "Pikachu", "pergunta": "...", "resposta": "..."}
+StreamingResponse (application/x-ndjson), uma linha por evento:
+  {"tipo": "parte", "texto": "..."}   pedaços de texto enquanto o modelo escreve
+  {"tipo": "fim", "resposta": "..."}  resposta completa, já sem markdown (vai para o histórico)
+  {"tipo": "erro", "detail": "..."}   falha no meio da geração
 ```
 
-## Contrato de `responder()`
+Erros antes de a resposta começar são HTTP normais: 404 (conversa não existe, por exemplo depois de reiniciar o backend), 400/422 (pergunta vazia ou longa demais) e 503 (Ollama fechado, modelo não baixado, tempo esgotado, com mensagem específica para cada caso).
 
-```python
-def responder(pergunta: str, contexto: str, ficha: dict) -> str
-```
+### Arquivos
 
-- **`pergunta`**: o texto do usuário, já sem espaços nas pontas, com 1 a 500 caracteres.
-- **`contexto`**: texto em português com todos os dados do Pokémon (exemplo abaixo).
-- **`ficha`**: o mesmo dicionário de `GET /pokemon/{numero}`, para quando for útil ler um campo direto.
-- **Retorno**: a resposta em texto puro, que o site mostra num parágrafo.
-- **Erros**: se o Ollama não responder (desligado, modelo não baixado, tempo esgotado), levante `LLMIndisponivel("mensagem em português para o usuário")`. A rota transforma isso em 503 e o site mostra a mensagem. **Não deixe outras exceções escaparem.**
+| Arquivo | Papel |
+|---|---|
+| `backend/llm.py` | Prompt (`INSTRUCOES`), opções do modelo, chamada ao Ollama em streaming, limpeza de markdown, mensagens de erro, pré-carregamento do modelo |
+| `backend/pokedex.py` | Fichas do CSV; `encontrar_citados()` (nomes e números na pergunta); `montar_contexto_conversa()` (o "R" do RAG); `resumo_calculado()`; `lembrete_para_pergunta()`; `montar_contexto()` (texto de uma ficha) |
+| `backend/tipos.py` | Tabela de efetividade de tipos da Gen 1 |
+| `backend/conversas.py` | Conversas em memória (Pokémon detectados + histórico), até 500 |
+| `backend/main.py` | Rotas `/conversas`, `/conversas/{id}`, `/conversas/{id}/perguntar`; cria a conversa em `/pokemon/identificar` |
+| `backend/testar_llm.py` | Bateria fixa de perguntas para comparar modelos e mudanças no prompt |
+| `frontend/src/App.tsx` | `ChatImagem`: lê o streaming e preenche a bolha da resposta |
 
-Não mude a assinatura da função, a rota nem o formato da resposta: o frontend depende deles.
+## O contexto (RAG)
 
-### Exemplo de `contexto` (Pikachu)
+`montar_contexto_conversa()` monta, nesta ordem:
 
-```
-Pokémon: Pikachu (nº 25 da Pokédex, Primeira Geração)
-Classificação: Mouse Pokémon
-Tipo: Elétrico
-Altura: 0.4 m
-Peso: 6.0 kg
-Lendário: não
-Stats base: HP 35, Ataque 55, Defesa 30, Especial 50, Velocidade 90 (na Primeira Geração existe um único stat Especial)
-Evolui de: não evolui de nenhum Pokémon
-Evolui para: Raichu (nº 26)
-Golpes aprendidos por nível (Pokémon Red/Blue): Thunder Shock (nível 1), Growl (nível 1), Thunder Wave (nível 9), Quick Attack (nível 16), Swift (nível 26), Agility (nível 33), Thunder (nível 43)
-Descrição da Pokédex (em inglês): When several of these POKéMON gather, their electricity could build and cause lightning storms.
-```
+Primeiro a parte **fixa da conversa**, depois a parte que **muda a cada pergunta**. Essa ordem é proposital: o Ollama reaproveita o começo do prompt que se repete entre perguntas, então nas perguntas seguintes da mesma conversa ele só lê o final (veja "Tempo de resposta").
 
-Para ver o contexto de qualquer Pokémon:
+1. **Pokémon detectados** na imagem e as **fichas completas** deles: dados, golpes de Red/Blue, golpes de outras versões quando diferem (27 Pokémon, como o Pikachu no Yellow), fraquezas, resistências e imunidades calculadas pela tabela de tipos, e a descrição da Pokédex (em inglês).
+2. **Fichas resumidas das evoluções** dos detectados (só dados básicos e stats), com cabeçalho explícito: "FICHA RESUMIDA DE RAICHU (forma evolutiva de Pikachu; NÃO foi detectado na imagem)". Sem isso, o modelo às vezes descrevia o Raichu quando perguntavam sobre o Pikachu.
+3. **Pokémon dos registros citados na pergunta atual**. Quando nenhum é citado, a linha diz "nenhum (se a pergunta fala de um POKéMON pelo nome, ele não existe nos registros de Kanto)": é assim que o modelo sabe recusar Pokémon de outras gerações.
+4. **Fichas completas dos citados** (na pergunta e nas 2 perguntas anteriores, para "e a altura dele?" continuar no mesmo Pokémon). Detectados + citados: até 6 fichas completas.
+5. **RESUMO CALCULADO** (com 2 ou mais Pokémon envolvidos): ordem de cada stat ("Velocidade, do maior para o menor: Charmander (65) > ..."), quantas vezes um é mais alto ou pesado que o outro e, para cada Pokémon, duas frases curtas de batalha nas duas direções: "Batalha - Squirtle leva vantagem de tipo sobre: Charmander (...)" e "Batalha - quem leva vantagem de tipo sobre Charmander: Squirtle (...)". A direção inversa existe porque "quem vence o Charmander?" era respondido errado quando só havia "X leva vantagem sobre Y"; frases longas com vários multiplicadores também confundiam o modelo com 3 Pokémon.
+
+Para ver o contexto que o modelo recebe:
 
 ```powershell
-python -c "from backend.pokedex import Pokedex, montar_contexto; print(montar_contexto(Pokedex().obter_ficha(6)))"
+python -c "from backend.pokedex import Pokedex; print(Pokedex().montar_contexto_conversa([6], ['Ele é bom contra um Blastoise?']))"
 ```
 
-## O que o dataset tem e o que não tem
+## Por que está assim (lições dos testes)
 
-Isso define o que o LLM consegue responder com segurança:
+Foram testados `llama3.2:3b`, `gemma3:4b`, `qwen2.5:7b`, `qwen3:4b` e `llama3.1:8b` com a bateria de `testar_llm.py`. O que se aprendeu, e que explica decisões que podem parecer exageradas:
 
-- **Tem**: nome, número, classificação, tipos, altura, peso, se é lendário, stats base, evoluções (de/para), golpes aprendidos por nível no Red/Blue e a descrição da Pokédex (em inglês, como no jogo).
-- **Não tem**: habilidades (não existem na Primeira Geração), vantagens/fraquezas de tipo, locais onde o Pokémon aparece, golpes por TM/HM, dados de outras gerações, e "jogos em que aparece", que foi tirado do escopo.
-- **Particularidades da Geração 1**: existe um único stat **Especial** (não há Ataque Especial e Defesa Especial separados), e não existem os tipos Fada, Aço e Sombrio. O Clefairy é Normal; o Magnemite é só Elétrico.
+- **Modelos pequenos erram comparações de números** ("Squirtle, com 43, é mais rápido que Charmander, com 65") **e vantagens de tipo**. `qwen2.5:7b` e `llama3.1:8b` respondem "sim" para "Fogo é super efetivo contra Água?" mesmo sem prompt nenhum. Por isso o backend **calcula** comparações e vereditos e entrega prontos no RESUMO CALCULADO. Não remova isso achando que o modelo dá conta.
+- **`qwen2.5:7b` ignora os dados quando eles contrariam o que ele "acredita"**, mesmo com o resultado colado na pergunta. `llama3.1:8b` segue os dados. Esse foi o principal motivo da escolha.
+- **Exemplos no prompt vazam.** Frases genéricas dos exemplos ("vulnerável a ataques de energia", "bandos de X costumam...") reaparecem em respostas de outros Pokémon, e um exemplo comparando Onix e Geodude fez o modelo inventar que "Geodude é evolução do Onix". O único exemplo restante (Onix) usa frases que só servem para o Onix. Se acrescentar exemplos, faça o mesmo e rode a bateria.
+- **Regras longe da pergunta são esquecidas.** "Compare com o detectado" só passou a funcionar com o `lembrete` colado na própria pergunta enviada ao modelo (o histórico guarda a pergunta original, sem o lembrete).
+- **`qwen3` não serve nesta versão do Ollama**: o modo de raciocínio não desliga (`think: false` faz o raciocínio vazar para a resposta), o que deixa tudo lento demais na CPU.
+- **Perguntas de batalha com 3 Pokémon continuam sendo o ponto mais fraco**: mesmo com as frases prontas, "qual dos três leva vantagem contra o Charmander?" ainda sai errado em cerca de metade das vezes. Perguntas de batalha entre dois Pokémon e comparações de stats saem certas.
+- **Temperatura**: 0,6 deixava as respostas instáveis (o mesmo modelo acertava e errava a mesma pergunta); 0,3 ficava correta, mas seca. Ficou em 0,4. Subir aumenta a criatividade e também detalhes inventados sem sinalização.
 
-Se uma pergunta pedir algo que não está no contexto, o LLM deve dizer que não tem essa informação, em vez de inventar. Isso é o que torna o RAG "consistente com o dataset", como pede o documento do projeto.
+## Configuração atual (`backend/llm.py`)
 
-## Implementação sugerida
-
-O Ollama expõe uma API HTTP em `http://localhost:11434`. Dá para chamá-la só com a biblioteca padrão do Python, sem acrescentar dependências:
-
-```python
-import json
-import urllib.error
-import urllib.request
-
-OLLAMA_URL = "http://localhost:11434/api/chat"
-MODELO_OLLAMA = "llama3.2:3b"   # troque pelo modelo escolhido pelo grupo
-TEMPO_LIMITE_SEGUNDOS = 120
-
-INSTRUCOES = (
-    "Você é a Pokédex da Primeira Geração. Responda em português do Brasil, "
-    "de forma curta e direta, usando APENAS os dados do Pokémon fornecidos "
-    "abaixo. Se a resposta não estiver nesses dados, diga que a Pokédex não "
-    "tem essa informação. Não invente dados de outras gerações."
-)
-
-
-def responder(pergunta, contexto, ficha):
-    corpo = {
-        "model": MODELO_OLLAMA,
-        "stream": False,
-        "messages": [
-            {"role": "system", "content": f"{INSTRUCOES}\n\nDados do Pokémon:\n{contexto}"},
-            {"role": "user", "content": pergunta},
-        ],
-    }
-
-    requisicao = urllib.request.Request(
-        OLLAMA_URL,
-        data=json.dumps(corpo).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
-
-    try:
-        with urllib.request.urlopen(requisicao, timeout=TEMPO_LIMITE_SEGUNDOS) as resposta:
-            dados = json.loads(resposta.read().decode("utf-8"))
-
-    except (urllib.error.URLError, TimeoutError) as erro:
-        raise LLMIndisponivel(
-            "Não foi possível falar com o Ollama. Verifique se ele está aberto "
-            f"e se o modelo {MODELO_OLLAMA} foi baixado."
-        ) from erro
-
-    return dados["message"]["content"].strip()
-```
-
-Mantenha as classes `LLMNaoConfigurado` e `LLMIndisponivel` em `backend/llm.py`, porque `main.py` as importa. Depois de implementar, `LLMNaoConfigurado` deixa de ser usada, mas pode continuar no arquivo.
-
-### Escolha do modelo
-
-- O grupo vai rodar **sem GPU**. Modelos pequenos (de 1 a 4 bilhões de parâmetros, como `llama3.2:3b`, `qwen2.5:3b` ou `gemma3:4b`) respondem em alguns segundos no processador. Modelos de 7–8B funcionam, mas podem levar mais de 30 segundos por resposta.
-- Prefira um modelo que escreva bem em português.
-- Coloque o nome do modelo numa constante no topo de `llm.py` e documente no README qual foi escolhido e o comando `ollama pull` correspondente.
-
-### Melhorias opcionais
-
-- **Mais contexto**: incluir também a ficha das evoluções (`ficha["evolui_para"]` traz os números; use `Pokedex().obter_ficha(numero)` e `montar_contexto`) permite responder "o Raichu é mais rápido que o Pikachu?".
-- **Pergunta comparando dois Pokémon**: exigiria mudar a rota e o frontend; combine com o grupo antes.
-- **Histórico de conversa**: hoje cada pergunta é independente. Guardar o histórico exige mudar a rota e o componente `PerguntaPokemon`.
-
-## Como testar
-
-1. Instale o Ollama (https://ollama.com), abra-o e baixe o modelo, por exemplo `ollama pull llama3.2:3b`.
-2. Suba o projeto: `npm run start-all` (com o ambiente virtual ativo).
-3. **Pela API**: abra http://127.0.0.1:8000/docs, encontre `POST /pokemon/{id_pokemon}/perguntar`, use `25` e o corpo `{"pergunta": "Quais golpes ele aprende?"}`.
-4. **Pelo site**: abra http://localhost:5173, busque o número 25 na busca manual (ou identifique uma imagem) e use o campo "Pergunte sobre este Pokémon".
-
-Respostas esperadas da API:
-
-| Situação | Código | Resposta |
+| Constante | Valor | Observação |
 |---|---|---|
-| Antes de implementar | 501 | `{"detail": "O LLM local ainda não foi configurado."}` |
-| Ollama fechado ou sem o modelo | 503 | `{"detail": "<mensagem de LLMIndisponivel>"}` |
-| Funcionando | 200 | `{"numero": 25, "nome": "Pikachu", "pergunta": "...", "resposta": "..."}` |
-| Número que não existe | 404 | `{"detail": "Pokémon não encontrado."}` |
-| Pergunta vazia | 400 ou 422 | Mensagem de validação |
+| `MODELO_OLLAMA` | `llama3.1:8b` | ~4,9 GB |
+| `temperature` | 0,4 | ver acima |
+| `num_ctx` | 8192 | o padrão do Ollama é pequeno e cortaria fichas e histórico sem avisar |
+| `num_predict` | 450 | teto de tamanho da resposta |
+| `MENSAGENS_DE_HISTORICO` | 12 | perguntas + respostas anteriores enviadas ao modelo |
+| `MANTER_CARREGADO` | 30 min | o modelo fica na memória entre perguntas; `aquecer()` o carrega quando a API sobe |
+| `think` | `False` | desliga o modo de raciocínio em modelos que têm |
 
-Perguntas para conferir se o RAG está funcionando:
+**Tempo de resposta** (medido numa CPU sem placa de vídeo):
+- A **primeira pergunta de cada conversa** é a mais lenta: o modelo precisa ler o prompt inteiro (~2.100 tokens com 1 Pokémon, ~3.700 com 3), o que leva de 40 a 45 s, mais a escrita da resposta (~7 tokens/s, de 5 a 25 s).
+- As **perguntas seguintes na mesma conversa** são bem mais rápidas, porque o começo do prompt é reaproveitado: a leitura cai para ~1 s e sobra só a escrita (5 a 25 s, conforme o tamanho da resposta).
+- O streaming faz o texto aparecer assim que o modelo começa a escrever. Com GPU, tudo leva cerca de 3 s.
+- Para isso, o prompt foi enxugado (sem a lista dos 151 nomes, sem frases repetidas nas fichas, evoluções resumidas), o que cortou 25% dos tokens e 27 a 31% do tempo de leitura, sem perder qualidade na bateria. Antes de aumentar o prompt, meça o efeito no tempo.
+- O `llama3.2:3b` leva cerca de 25 s na CPU, mas erra muito mais (Eevee "não evolui", Fogo vence Água, inventa rotas).
 
-- "Quais golpes o Pikachu aprende e em que nível?" → deve listar os 7 golpes do contexto, com os níveis certos.
-- "Para quem o Eevee evolui?" (número 133) → Vaporeon, Jolteon e Flareon.
-- "Qual o Ataque Especial do Mewtwo?" (número 150) → deve explicar que na Geração 1 existe um único stat Especial, de valor 154.
-- "Em que rota eu encontro o Pikachu?" → deve dizer que a Pokédex não tem essa informação.
+## Resultado atual da bateria (`llama3.1:8b`)
 
-## Regras do projeto para quem for mexer no código
+Nas duas últimas rodadas, 11 e 12 de 12 respostas corretas: golpes completos com nível, evoluções do Eevee, Especial único do Mewtwo (154), mais rápido entre os iniciais, Charizard em desvantagem contra Blastoise, comparação de altura Blastoise × Pikachu (4 vezes), Lucario recusado, pergunta fora do tema recusada e comparação de peso usando o histórico.
 
-- Código, comentários e mensagens ao usuário em **português**, no mesmo estilo do resto do projeto.
-- Sistema **offline**: só o Ollama local. Nada de chaves de API, OpenAI, Anthropic etc.
-- **Privacidade**: não grave perguntas, respostas nem imagens em disco.
-- A rota é síncrona (`def`, não `async def`) de propósito: o FastAPI a executa em outra thread e o site continua respondendo enquanto o LLM pensa. Mantenha assim, ou use um cliente assíncrono de verdade se mudar para `async def`.
-- Para mudar o formato da ficha, edite `backend/pokedex.py` e os tipos TypeScript em `frontend/src/App.tsx` juntos.
+Limitações conhecidas:
+- Em descrições livres, às vezes inventa detalhes pequenos sem marcar como `Registro externo` (ex.: cor dos olhos do Pikachu).
+- Sobre lugares onde o Pokémon aparece, costuma só dizer que não consta, sem `Registro externo`.
+- O tom de Pokédex aparece, mas nem sempre é tão rico quanto nos jogos.
+
+## Como mexer com segurança
+
+1. Altere o prompt, as opções ou o contexto.
+2. Rode a bateria pelo menos duas vezes (a resposta varia entre execuções):
+
+```powershell
+python -m backend.testar_llm                       # modelo configurado em llm.py
+python -m backend.testar_llm llama3.1:8b qwen2.5:7b # comparar modelos
+python -m backend.testar_llm --cpu --rapido        # tempo na CPU, só 3 perguntas
+```
+
+3. Leia `saidas/teste_llm_<modelo>.md`: cada caso traz a resposta esperada. Uma mudança só vale se não piorar nenhum caso que antes acertava.
+4. Para casos novos, acrescente em `CASOS` no `testar_llm.py`.
+
+## Regras do projeto
+
+- Código, comentários e mensagens ao usuário em **português**.
+- **Offline**: só o Ollama local. Nada de APIs na nuvem.
+- **Privacidade**: perguntas, respostas e imagens nunca vão para o disco; o histórico some quando o backend para.
+- Mudou o formato da ficha? Edite `backend/pokedex.py` e os tipos TypeScript em `frontend/src/App.tsx` juntos.

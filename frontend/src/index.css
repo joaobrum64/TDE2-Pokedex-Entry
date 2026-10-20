@@ -39,7 +39,8 @@ body {
 }
 
 #root {
-  max-width: 1180px;
+  max-width: 1440px;
+  padding: 0 24px;
   margin: 0 auto;
 }
 

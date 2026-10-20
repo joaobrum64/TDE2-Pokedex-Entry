@@ -1,15 +1,24 @@
+import json
 import threading
 from io import BytesIO
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
-from backend.llm import LLMIndisponivel, LLMNaoConfigurado, responder
+from backend.conversas import Conversas
+from backend.llm import (
+    LLMIndisponivel,
+    LLMNaoConfigurado,
+    aquecer,
+    limpar_markdown,
+    responder_em_partes,
+)
 from backend.ml.pipeline import PipelinePokemon
-from backend.pokedex import CSV_PATH, SPRITES_PATH, Pokedex, montar_contexto
+from backend.pokedex import CSV_PATH, SPRITES_PATH, Pokedex
 
 
 # Arquivos maiores que isso são recusados antes de abrir a imagem.
@@ -21,6 +30,8 @@ TAMANHO_MAXIMO_ARQUIVO_MB = 10
 LADO_MAXIMO_PROCESSAMENTO = 1600
 
 TAMANHO_MAXIMO_PERGUNTA = 500
+
+MAXIMO_POKEMONS_POR_CONVERSA = 10
 
 
 app = FastAPI(
@@ -47,6 +58,9 @@ app.add_middleware(
 
 pokedex = Pokedex()
 
+# Conversas com o LLM, só na memória (somem quando o backend para).
+conversas = Conversas()
+
 
 print(
     "Carregando pipeline de Machine Learning..."
@@ -63,6 +77,9 @@ print(
 # processando duas imagens em paralelo, e assim o uso de memória
 # fica previsível. As outras rotas continuam respondendo.
 trava_pipeline = threading.Lock()
+
+# Carrega o modelo do Ollama em segundo plano, se ele estiver aberto.
+aquecer()
 
 
 classes_sem_dados = [
@@ -91,6 +108,13 @@ class Pergunta(BaseModel):
     pergunta: str = Field(
         min_length=1,
         max_length=TAMANHO_MAXIMO_PERGUNTA,
+    )
+
+
+class NovaConversa(BaseModel):
+    numeros: list[int] = Field(
+        min_length=1,
+        max_length=MAXIMO_POKEMONS_POR_CONVERSA,
     )
 
 
@@ -168,23 +192,61 @@ def get_pokemon(
     return ficha
 
 
-# Perguntas ao LLM local sobre um Pokémon (RAG): a ficha vira texto de
-# contexto e backend/llm.py gera a resposta. Ver LLM.md. Também é
-# síncrona, porque o LLM pode levar vários segundos para responder.
-@app.post("/pokemon/{id_pokemon}/perguntar")
-def perguntar_sobre_pokemon(
-    id_pokemon: int,
-    corpo: Pergunta,
-):
-    ficha = pokedex.obter_ficha(
-        id_pokemon
-    )
+def linha_json(dados):
+    return json.dumps(dados, ensure_ascii=False) + "\n"
 
-    if ficha is None:
+
+def obter_conversa(conversa_id):
+    conversa = conversas.obter(conversa_id)
+
+    if conversa is None:
         raise HTTPException(
             status_code=404,
-            detail="Pokémon não encontrado.",
+            detail=(
+                "Conversa não encontrada. O backend pode ter sido "
+                "reiniciado: envie a imagem de novo."
+            ),
         )
+
+    return conversa
+
+
+# Conversa para a busca manual (na identificação por imagem ela é
+# criada automaticamente e vem em "conversa_id").
+@app.post("/conversas")
+def criar_conversa(
+    corpo: NovaConversa,
+):
+    for numero in corpo.numeros:
+        if pokedex.obter_ficha(numero) is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Pokémon {numero} não encontrado.",
+            )
+
+    return {
+        "conversa_id": conversas.criar(corpo.numeros),
+    }
+
+
+@app.get("/conversas/{conversa_id}")
+def ver_conversa(
+    conversa_id: str,
+):
+    return obter_conversa(conversa_id)
+
+
+# Perguntas ao LLM local (RAG): as fichas dos Pokémon detectados, dos
+# citados na pergunta e das evoluções viram o contexto, e
+# backend/llm.py gera a resposta levando em conta o histórico da
+# conversa. Ver LLM.md. A resposta chega em streaming (o texto aparece
+# aos poucos no site).
+@app.post("/conversas/{conversa_id}/perguntar")
+def perguntar(
+    conversa_id: str,
+    corpo: Pergunta,
+):
+    conversa = obter_conversa(conversa_id)
 
     pergunta = corpo.pergunta.strip()
 
@@ -194,11 +256,28 @@ def perguntar_sobre_pokemon(
             detail="A pergunta está vazia.",
         )
 
+    # Nomes citados nas últimas perguntas também entram no contexto,
+    # para "e a altura dele?" continuar falando do mesmo Pokémon.
+    perguntas_recentes = [
+        mensagem["texto"]
+        for mensagem in conversa["mensagens"]
+        if mensagem["autor"] == "usuario"
+    ][-2:]
+
+    contexto = pokedex.montar_contexto_conversa(
+        conversa["numeros"],
+        [pergunta, *reversed(perguntas_recentes)],
+    )
+
     try:
-        resposta = responder(
+        partes = responder_em_partes(
             pergunta,
-            montar_contexto(ficha),
-            ficha,
+            contexto,
+            conversa["mensagens"],
+            lembrete=pokedex.lembrete_para_pergunta(
+                conversa["numeros"],
+                pergunta,
+            ),
         )
 
     except LLMNaoConfigurado as erro:
@@ -213,12 +292,41 @@ def perguntar_sobre_pokemon(
             detail=str(erro),
         )
 
-    return {
-        "numero": ficha["numero"],
-        "nome": ficha["nome"],
-        "pergunta": pergunta,
-        "resposta": resposta,
-    }
+    # A resposta vai sendo enviada enquanto o modelo escreve: uma linha
+    # JSON por pedaço ({"tipo": "parte", "texto": ...}) e, no fim, a
+    # resposta completa já limpa ({"tipo": "fim", "resposta": ...}) ou
+    # um erro ({"tipo": "erro", "detail": ...}).
+    def transmitir():
+        acumulado = ""
+
+        try:
+            for pedaco in partes:
+                acumulado += pedaco
+
+                yield linha_json(
+                    {"tipo": "parte", "texto": pedaco.replace("**", "")}
+                )
+
+        except LLMIndisponivel as erro:
+            yield linha_json({"tipo": "erro", "detail": str(erro)})
+            return
+
+        resposta = limpar_markdown(acumulado)
+
+        if not resposta:
+            yield linha_json(
+                {"tipo": "erro", "detail": "O LLM não devolveu nenhuma resposta."}
+            )
+            return
+
+        conversas.registrar(conversa_id, pergunta, resposta)
+
+        yield linha_json({"tipo": "fim", "resposta": resposta})
+
+    return StreamingResponse(
+        transmitir(),
+        media_type="application/x-ndjson",
+    )
 
 
 # Rota síncrona (def, não async def): o FastAPI a executa em outra
@@ -291,10 +399,23 @@ def identificar_pokemon(
             }
         )
 
+    # Uma conversa com o LLM por imagem, já sabendo quais Pokémon
+    # foram detectados.
+    conversa_id = None
+
+    if pokemons_encontrados:
+        conversa_id = conversas.criar(
+            [
+                encontrado["pokemon"]["numero"]
+                for encontrado in pokemons_encontrados
+            ][:MAXIMO_POKEMONS_POR_CONVERSA]
+        )
+
     return {
         "quantidade": len(
             pokemons_encontrados
         ),
+        "conversa_id": conversa_id,
         "largura": imagem.width,
         "altura": imagem.height,
         "pokemons": pokemons_encontrados,
